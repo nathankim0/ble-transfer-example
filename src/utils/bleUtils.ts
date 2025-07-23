@@ -1,7 +1,9 @@
-import 'react-native-get-random-values';
-import { Buffer } from 'buffer';
-import { BLE_CHUNK_DATA_SIZE } from '../constants/bleConstants';
+// 기본 상수
+export const BLE_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
+export const BLE_WRITE_CHARACTERISTIC = '87654321-4321-4321-4321-cba987654321';
+export const BLE_READ_CHARACTERISTIC = '11111111-2222-3333-4444-555555555555';
 
+// 연결 코드 생성
 export const generateConnectionCode = (): string => {
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let result = '';
@@ -11,58 +13,86 @@ export const generateConnectionCode = (): string => {
   return result;
 };
 
-export const stringToBytes = (str: string): number[] => {
-  // React Native 호환 방식: Buffer 사용
-  return Array.from(Buffer.from(str, 'utf8'));
+// 시리얼 번호 생성
+export const generateSerialNumber = (): string => {
+  const timestamp = Date.now().toString().slice(-6);
+  return `TAB-${timestamp}`;
 };
 
-export const bytesToString = (bytes: number[]): string => {
-  // React Native 호환 방식: Buffer 사용
-  try {
-    return Buffer.from(bytes).toString('utf8');
-  } catch (error) {
-    // 실패시 fallback 방식 사용
-    console.warn('Buffer conversion failed, using fallback:', error);
-    return String.fromCharCode(...bytes);
-  }
+// JWT 토큰 생성 (Mock)
+export const generateJwtToken = (serialNumber: string): string => {
+  const mockPayload = {
+    deviceId: serialNumber,
+    userId: 'user123',
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24) // 24 hours
+  };
+  
+  // Mock JWT format
+  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payload = btoa(JSON.stringify(mockPayload));
+  const signature = 'mock-signature-' + Date.now();
+  
+  return `${header}.${payload}.${signature}`;
 };
 
-export const chunkData = (data: string): string[] => {
-  const bytes = stringToBytes(data);
-  const chunks: string[] = [];
-  const totalChunks = Math.ceil(bytes.length / BLE_CHUNK_DATA_SIZE);
-  
-  for (let i = 0; i < totalChunks; i++) {
-    const chunkStart = i * BLE_CHUNK_DATA_SIZE;
-    const chunkEnd = Math.min(chunkStart + BLE_CHUNK_DATA_SIZE, bytes.length);
-    const chunkBytes = bytes.slice(chunkStart, chunkEnd);
-    
-    const header = [i, totalChunks];
-    const fullChunk = [...header, ...chunkBytes];
-    
-    chunks.push(bytesToString(fullChunk));
-  }
-  
-  return chunks;
+// JWT 토큰 검증
+export const isValidJwtToken = (token: string): boolean => {
+  if (!token) return false;
+  const parts = token.split('.');
+  return parts.length === 3;
 };
 
-export const assembleChunks = (chunks: Map<number, string>): string | null => {
-  const sortedChunks = Array.from(chunks.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([_, chunk]) => chunk);
+// 디바이스 필터링
+export const isIoTDevice = (deviceName: string | null): boolean => {
+  if (!deviceName) return false;
   
-  try {
-    let assembled = '';
-    for (const chunk of sortedChunks) {
-      const bytes = stringToBytes(chunk);
-      if (bytes.length < 2) continue;
-      
-      const data = bytes.slice(2);
-      assembled += bytesToString(data);
-    }
-    return assembled;
-  } catch (error) {
-    console.error('Error assembling chunks:', error);
-    return null;
+  const iotPatterns = [
+    'IoT-',
+    'TAB-',
+    'TABLET-',
+    'MOBILE-',
+    'BLE-'
+  ];
+  
+  return iotPatterns.some(pattern => 
+    deviceName.toUpperCase().includes(pattern.toUpperCase())
+  );
+};
+
+// ========================
+// 비즈니스 로직 함수들
+// ========================
+
+// 데이터 타입 판별
+export const getDataType = (data: string): 'connectionCode' | 'serialNumber' | 'jwtToken' | 'unknown' => {
+  if (data.length === 6 && /^[A-Z0-9]+$/.test(data)) {
+    return 'connectionCode';
   }
+  if (data.startsWith('TAB-') || data.startsWith('IOT-') || data.startsWith('TABLET-')) {
+    return 'serialNumber';
+  }
+  if (data.startsWith('eyJ')) {
+    return 'jwtToken';
+  }
+  return 'unknown';
+};
+
+// 연결 코드 검증
+export const validateConnectionCode = (code: string): boolean => {
+  return code.length === 6 && /^[A-Z0-9]+$/.test(code);
+};
+
+// 시리얼 번호 검증
+export const validateSerialNumber = (serialNumber: string): boolean => {
+  return serialNumber.startsWith('TAB-') || 
+         serialNumber.startsWith('IOT-') || 
+         serialNumber.startsWith('TABLET-');
+};
+
+// 서버 통신 시뮬레이션 (JWT 생성)
+export const simulateServerRequest = async (serialNumber: string): Promise<string> => {
+  // 2초 대기 (서버 통신 시뮬레이션)
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  return generateJwtToken(serialNumber);
 };

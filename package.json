@@ -17,7 +17,6 @@
     "react": "19.1.0",
     "react-native": "0.80.1",
     "react-native-ble-plx": "^3.5.0",
-    "react-native-bluetooth-client": "^0.1.12",
     "react-native-get-random-values": "^1.11.0",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-screens": "^4.13.1"
