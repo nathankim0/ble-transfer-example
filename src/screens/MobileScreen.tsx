@@ -35,6 +35,7 @@ const MobileScreen: React.FC = () => {
   const [connectionCode] = useState(generateConnectionCode());
   const [status, setStatus] = useState('준비');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [generatedJwtToken, setGeneratedJwtToken] = useState<string | null>(null);
   
   const registrationSubscription = useRef<Subscription | null>(null);
   const connectedDeviceRef = useRef<Device | null>(null);
@@ -146,6 +147,14 @@ const MobileScreen: React.FC = () => {
         connectionCode,
         setStatus,
         (result) => {
+          setGeneratedJwtToken(result.jwtToken);
+          
+          // 완료 후 구독 해제
+          if (registrationSubscription.current) {
+            registrationSubscription.current.remove();
+            registrationSubscription.current = null;
+          }
+          
           Alert.alert('성공', `IoT 기기 등록이 완료되었습니다!\n\n시리얼 번호: ${result.serialNumber}\nJWT: ${result.jwtToken.substring(0, 50)}...`, [
             {
               text: '확인',
@@ -154,6 +163,12 @@ const MobileScreen: React.FC = () => {
           ]);
         },
         (error) => {
+          // 오류 발생 시에도 구독 해제
+          if (registrationSubscription.current) {
+            registrationSubscription.current.remove();
+            registrationSubscription.current = null;
+          }
+          
           Alert.alert('오류', error);
           setStatus('등록 실패');
         }
@@ -245,6 +260,15 @@ const MobileScreen: React.FC = () => {
       <Text style={styles.deviceListTitle}>
         발견된 IoT 기기 ({devices.size})
       </Text>
+      
+      {generatedJwtToken && (
+        <View style={styles.jwtContainer}>
+          <Text style={styles.jwtLabel}>전송된 JWT 토큰:</Text>
+          <Text style={styles.jwtText} numberOfLines={0}>
+            {generatedJwtToken}
+          </Text>
+        </View>
+      )}
       
       <FlatList
         data={Array.from(devices.values())}
@@ -399,6 +423,28 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 20,
     fontStyle: 'italic',
+  },
+  jwtContainer: {
+    backgroundColor: '#f0f0f0',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  jwtLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1976d2',
+    marginBottom: 8,
+  },
+  jwtText: {
+    fontSize: 14,
+    color: '#333',
+    textAlign: 'center',
+    backgroundColor: '#e0e0e0',
+    padding: 10,
+    borderRadius: 8,
+    minHeight: 50,
   },
 });
 

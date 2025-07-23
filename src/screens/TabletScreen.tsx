@@ -28,17 +28,25 @@ const TabletScreen: React.FC = () => {
     const cleanupListener = useRef<(() => void) | null>(null);
 
   const onDataReceived = useCallback(async (deviceId: string, data: string) => {
+    console.log('[TabletScreen] 데이터 수신:', { deviceId, data, length: data.length });
+    
     try {
       if (!connectedDevices.includes(deviceId)) {
+        console.log('[TabletScreen] 새로운 기기 연결:', deviceId);
         setConnectedDevices(prev => [...prev, deviceId]);
       }
       
+      console.log('[TabletScreen] handleIoTRegistrationData 호출 전');
       await handleIoTRegistrationData(
         deviceId,
         data,
         serialNumber,
-        setStatus,
+        (status) => {
+          console.log('[TabletScreen] 상태 업데이트:', status);
+          setStatus(status);
+        },
         (result) => {
+          console.log('[TabletScreen] 등록 완료:', result);
           if (result.connectionCode) {
             setConnectionCode(result.connectionCode);
           }
@@ -46,7 +54,7 @@ const TabletScreen: React.FC = () => {
             setJwtToken(result.jwtToken);
             Alert.alert(
               '✅ 등록 완료!',
-              `IoT 기기가 성공적으로 등록되었습니다!\n\n연결 코드: ${result.connectionCode || connectionCode}\n시리얼 번호: ${result.serialNumber}\nJWT 토큰: ${result.jwtToken.substring(0, 50)}...`,
+              `IoT 기기가 성공적으로 등록되었습니다!\n\n연결 코드: ${result.connectionCode || connectionCode}\n시리얼 번호: ${result.serialNumber}\n\nJWT 토큰:\n${result.jwtToken}`,
               [
                 {
                   text: '확인',
@@ -57,9 +65,11 @@ const TabletScreen: React.FC = () => {
           }
         }
       );
+      console.log('[TabletScreen] handleIoTRegistrationData 호출 완료');
       
     } catch (error) {
-      console.error('데이터 처리 오류:', error);
+      console.error('[TabletScreen] 데이터 처리 오류:', error);
+      setStatus('데이터 처리 오류 발생');
     }
   }, [connectedDevices, connectionCode, serialNumber]);
 

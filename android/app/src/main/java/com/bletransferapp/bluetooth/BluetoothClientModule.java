@@ -311,7 +311,7 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
      * @param promise
      */
     @ReactMethod
-    private void stopAdvertising(Promise promise) {
+    public void stopAdvertising(Promise promise) {
         try {
             Log.d(TAG, "Service: Stopping Advertising");
             if (mBluetoothLeAdvertiser != null) {
@@ -334,21 +334,44 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void addService(String uuid, boolean primary) {
+        Log.d(TAG, "=== addService 시작 ===");
+        Log.d(TAG, "Service UUID: " + uuid);
+        Log.d(TAG, "Primary: " + primary);
+        
         UUID SERVICE_UUID = UUID.fromString(uuid);
-//        int type = BluetoothGattService.SERVICE_TYPE_PRIMARY;
         int type = primary == true ? 0 : 1;
         BluetoothGattService tempService = new BluetoothGattService(SERVICE_UUID, type);
-        Log.d(TAG, tempService.getCharacteristics().toString());
-        Log.d(TAG,  tempService.getIncludedServices().toString());
-        if (!this.servicesMap.containsKey(uuid))
+        Log.d(TAG, "Service created successfully");
+        Log.d(TAG, "Current characteristics: " + tempService.getCharacteristics().toString());
+        Log.d(TAG, "Included services: " + tempService.getIncludedServices().toString());
+        
+        if (!this.servicesMap.containsKey(uuid)) {
             this.servicesMap.put(uuid, tempService);
+            Log.d(TAG, "Service added to map. Total services: " + this.servicesMap.size());
+        } else {
+            Log.d(TAG, "Service already exists in map");
+        }
     }
 
     @ReactMethod
     public void addCharacteristicToService(String serviceUUID, String uuid, Integer permissions, Integer properties, String data) {
+        Log.d(TAG, "=== addCharacteristicToService 시작 ===");
+        Log.d(TAG, "Service UUID: " + serviceUUID);
+        Log.d(TAG, "Characteristic UUID: " + uuid);
+        Log.d(TAG, "Permissions: " + permissions);
+        Log.d(TAG, "Properties: " + properties);
+        Log.d(TAG, "Data: " + data);
+        
         UUID CHAR_UUID = UUID.fromString(uuid);
         BluetoothGattCharacteristic tempChar = new BluetoothGattCharacteristic(CHAR_UUID, properties, permissions);
-        this.servicesMap.get(serviceUUID).addCharacteristic(tempChar);
+        
+        BluetoothGattService service = this.servicesMap.get(serviceUUID);
+        if (service != null) {
+            service.addCharacteristic(tempChar);
+            Log.d(TAG, "Characteristic added successfully. Service now has " + service.getCharacteristics().size() + " characteristics");
+        } else {
+            Log.e(TAG, "Service not found for UUID: " + serviceUUID);
+        }
     }
 
 
@@ -356,18 +379,23 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
         @Override
         public void onConnectionStateChange(BluetoothDevice device, final int status, int newState) {
             super.onConnectionStateChange(device, status, newState);
-            Log.d(TAG, "status:"+status);
+            Log.d(TAG, "=== onConnectionStateChange ===");
+            Log.d(TAG, "Device: " + device.toString());
+            Log.d(TAG, "Status: " + status);
+            Log.d(TAG, "NewState: " + newState);
+            
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothGatt.STATE_CONNECTED) {
                     mBluetoothDevices.add(device);
-                    // TODO 디바이스 연결 관련 이벤트 추가
-                    Log.d(TAG, "devices:"+mBluetoothDevices.toString());
+                    Log.d(TAG, "기기 연결됨! Connected devices count: " + mBluetoothDevices.size());
+                    Log.d(TAG, "Connected devices: " + mBluetoothDevices.toString());
                 } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                    // TODO 디바이스 연결 해제 관련 이벤트 추가
-                    Log.d(TAG, "devices:"+mBluetoothDevices.toString());
+                    Log.d(TAG, "기기 연결 해제됨!");
                     mBluetoothDevices.remove(device);
+                    Log.d(TAG, "Remaining devices count: " + mBluetoothDevices.size());
                 }
             } else {
+                Log.d(TAG, "연결 실패! Status: " + status);
                 mBluetoothDevices.remove(device);
             }
         }
@@ -400,6 +428,21 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
                                                  int offset, byte[] value) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite,
                 responseNeeded, offset, value);
+            
+            Log.d(TAG, "=== onCharacteristicWriteRequest 시작 ===");
+            Log.d(TAG, "Device: " + device.toString());
+            Log.d(TAG, "RequestId: " + requestId);
+            Log.d(TAG, "Characteristic UUID: " + characteristic.getUuid().toString());
+            Log.d(TAG, "PreparedWrite: " + preparedWrite);
+            Log.d(TAG, "ResponseNeeded: " + responseNeeded);
+            Log.d(TAG, "Offset: " + offset);
+            Log.d(TAG, "Value length: " + (value != null ? value.length : 0));
+            
+            if (value != null) {
+                String receivedString = new String(value, StandardCharsets.UTF_8);
+                Log.d(TAG, "Received string: " + receivedString);
+            }
+            
             characteristic.setValue(value);
             WritableMap map = Arguments.createMap();
             WritableArray data = Arguments.createArray();
@@ -410,12 +453,20 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
             map.putString("device", device.toString());
             Log.d(TAG, "데이터는 ~~~~~~~~");
             Log.d(TAG, map.toString());
+            
             if (responseNeeded) {
-
+                Log.d(TAG, "Sending response to device");
                 mGattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+                Log.d(TAG, "Emitting onReceiveData event");
+                getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                    .emit("onReceiveData", map);
+                Log.d(TAG, "Event emitted successfully");
+            } else {
+                Log.d(TAG, "Response not needed, but still emitting event");
                 getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                     .emit("onReceiveData", map);
             }
+            Log.d(TAG, "=== onCharacteristicWriteRequest 완료 ===");
         }
     };
 
