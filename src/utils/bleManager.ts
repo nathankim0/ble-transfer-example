@@ -53,7 +53,13 @@ export const generateJwtToken = (serialNumber: string): string => {
   return `${header}.${payload}.${signature}`;
 };
 
-// isIoTDevice 함수 제거 - 사용되지 않음
+export const isIoTDevice = (deviceName: string | null): boolean => {
+  if (!deviceName) return false;
+  const patterns = ['IoT-', 'TAB-', 'TABLET-', 'MOBILE-', 'BLE-'];
+  return patterns.some(pattern => 
+    deviceName.toUpperCase().includes(pattern.toUpperCase())
+  );
+};
 
 export const getDataType = (data: string): 'connectionCode' | 'serialNumber' | 'jwtToken' | 'unknown' => {
   if (data.length === CONNECTION_CODE_LENGTH && /^[A-Z0-9]+$/.test(data)) return 'connectionCode';
