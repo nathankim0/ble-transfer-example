@@ -155,6 +155,49 @@ export const writeData = async (
   );
 };
 
+export const writeDataInChunks = async (
+  device: Device,
+  serviceUUID: string,
+  characteristicUUID: string,
+  message: string
+): Promise<void> => {
+  console.log('[writeDataInChunks] 청크 전송 시작:', { messageLength: message.length });
+  
+  // 메시지를 청크로 나누기
+  const chunks: string[] = [];
+  for (let i = 0; i < message.length; i += BLE_CHUNK_DATA_SIZE) {
+    chunks.push(message.slice(i, i + BLE_CHUNK_DATA_SIZE));
+  }
+  
+  console.log('[writeDataInChunks] 총 청크 수:', chunks.length);
+  
+  // 각 청크를 순차적으로 전송
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const base64Chunk = Buffer.from(chunk, 'utf-8').toString('base64');
+    
+    console.log(`[writeDataInChunks] 청크 ${i + 1}/${chunks.length} 전송:`, chunk.substring(0, 10) + '...');
+    
+    try {
+      await device.writeCharacteristicWithResponseForService(
+        serviceUUID,
+        characteristicUUID,
+        base64Chunk
+      );
+      
+      // 청크 간 짧은 딜레이 (BLE 안정성을 위해)
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    } catch (error) {
+      console.error(`[writeDataInChunks] 청크 ${i + 1} 전송 실패:`, error);
+      throw error;
+    }
+  }
+  
+  console.log('[writeDataInChunks] 모든 청크 전송 완료');
+};
+
 export const monitorCharacteristic = (
   device: Device,
   serviceUUID: string,
@@ -309,6 +352,8 @@ export const startIoTRegistration = async (
 ): Promise<Subscription> => {
   console.log('[startIoTRegistration] 시작:', { deviceId: device.id, connectionCode });
   
+  let isCompleted = false; // 완료 상태 추적
+  
   try {
     onStatusUpdate('연결 코드 전송 중...');
     console.log('[startIoTRegistration] 연결 코드 전송 시작');
@@ -318,11 +363,13 @@ export const startIoTRegistration = async (
     onStatusUpdate('연결 코드 전송 완료 - 시리얼 번호 대기 중...');
     
     console.log('[startIoTRegistration] 모니터링 시작');
-    return monitorCharacteristic(
+    const subscription = monitorCharacteristic(
       device,
       BLE_SERVICE_UUID,
       BLE_WRITE_CHARACTERISTIC,
       async (data) => {
+        if (isCompleted) return; // 이미 완료된 경우 무시
+        
         const dataType = getDataType(data);
         console.log('[startIoTRegistration] 데이터 수신:', { data, dataType });
         
@@ -339,26 +386,51 @@ export const startIoTRegistration = async (
             const markedJwtToken = `START${jwtToken}END`;
             console.log('[startIoTRegistration] START/END 마크가 포함된 JWT 토큰 전송:', markedJwtToken.length + '글자');
             
-            await writeData(device, BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC, markedJwtToken);
+            await writeDataInChunks(device, BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC, markedJwtToken);
             console.log('[startIoTRegistration] JWT 토큰 전송 완료');
             
-            // JWT 토큰 전송 완료 후 바로 완료 처리 (더 이상 응답 대기하지 않음)
+            // 완료 상태 설정 및 모니터링 중단
+            isCompleted = true;
+            subscription.remove();
+            console.log('[startIoTRegistration] 모니터링 중단됨');
+            
+            // JWT 토큰 전송 완료 후 안정화 시간 제공
+            await new Promise(resolve => setTimeout(resolve, 500));
             onStatusUpdate('IoT 기기 등록 완료!');
             onComplete({ serialNumber: data, jwtToken });
             
           } catch (error) {
             console.error('[startIoTRegistration] JWT 토큰 처리 실패:', error);
-            onError('JWT 토큰 처리 실패');
+            isCompleted = true;
+            subscription.remove();
+            
+            if (error instanceof Error) {
+              if (error.message.includes('timed out')) {
+                onError('JWT 토큰 전송 타임아웃 - 재시도해주세요');
+              } else if (error.message.includes('cancelled')) {
+                onError('JWT 토큰 전송 취소됨');
+              } else {
+                onError(`JWT 토큰 처리 실패: ${error.message}`);
+              }
+            } else {
+              onError('JWT 토큰 처리 실패');
+            }
           }
         } else {
           console.log('[startIoTRegistration] 예상하지 못한 데이터 타입:', { data, dataType });
         }
       },
       (error) => {
+        if (isCompleted) {
+          console.log('[startIoTRegistration] 이미 완료된 상태 - 모니터링 에러 무시:', error);
+          return;
+        }
         console.error('[startIoTRegistration] 모니터링 오류:', error);
         onError('데이터 모니터링 오류');
       }
     );
+    
+    return subscription;
   } catch (error) {
     console.error('[startIoTRegistration] 연결 코드 전송 실패:', error);
     onError('연결 코드 전송 실패');
