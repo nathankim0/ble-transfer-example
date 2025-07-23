@@ -31,10 +31,14 @@ const TabletScreen: React.FC = () => {
     console.log('[TabletScreen] 데이터 수신:', { deviceId, data, length: data.length });
     
     try {
-      if (!connectedDevices.includes(deviceId)) {
-        console.log('[TabletScreen] 새로운 기기 연결:', deviceId);
-        setConnectedDevices(prev => [...prev, deviceId]);
-      }
+      // connectedDevices state를 직접 참조하지 않고 setter 함수만 사용
+      setConnectedDevices(prev => {
+        if (!prev.includes(deviceId)) {
+          console.log('[TabletScreen] 새로운 기기 연결:', deviceId);
+          return [...prev, deviceId];
+        }
+        return prev;
+      });
       
       console.log('[TabletScreen] handleIoTRegistrationData 호출 전');
       await handleIoTRegistrationData(
@@ -54,7 +58,7 @@ const TabletScreen: React.FC = () => {
             setJwtToken(result.jwtToken);
             Alert.alert(
               '✅ 등록 완료!',
-              `IoT 기기가 성공적으로 등록되었습니다!\n\n연결 코드: ${result.connectionCode || connectionCode}\n시리얼 번호: ${result.serialNumber}\n\nJWT 토큰:\n${result.jwtToken}`,
+              `IoT 기기가 성공적으로 등록되었습니다!\n\n연결 코드: ${result.connectionCode}\n시리얼 번호: ${result.serialNumber}\n\nJWT 토큰:\n${result.jwtToken}`,
               [
                 {
                   text: '확인',
@@ -63,6 +67,61 @@ const TabletScreen: React.FC = () => {
               ]
             );
           }
+        },
+        (connectionCode, onConfirm) => {
+          console.log('[TabletScreen] 연결 코드 확인 요청:', connectionCode);
+          
+          let timeoutId: NodeJS.Timeout;
+          let alertShown = false;
+          
+          // 30초 후 자동 취소 (BLE 타임아웃 전에)
+          timeoutId = setTimeout(() => {
+            if (!alertShown) return;
+            console.log('[TabletScreen] 연결 요청 타임아웃');
+            setStatus('연결 요청 시간 초과');
+          }, 30000);
+          
+          alertShown = true;
+          Alert.alert(
+            '⚡ 연결 요청 (30초 제한)',
+            `모바일 기기에서 연결을 요청했습니다.\n\n연결 코드: ${connectionCode}\n\n⏰ 30초 내에 응답해주세요.\n연결하시겠습니까?`,
+            [
+              {
+                text: '취소',
+                style: 'cancel',
+                onPress: () => {
+                  clearTimeout(timeoutId);
+                  alertShown = false;
+                  console.log('[TabletScreen] 연결 요청 거부');
+                  setStatus('연결 요청이 거부되었습니다');
+                }
+              },
+              {
+                text: '연결',
+                onPress: () => {
+                  clearTimeout(timeoutId);
+                  alertShown = false;
+                  console.log('[TabletScreen] 연결 요청 승인');
+                  setStatus('연결 승인 중...');
+                  
+                  // 즉시 onConfirm 실행
+                  onConfirm()
+                    .then(() => {
+                      console.log('[TabletScreen] onConfirm 함수 실행 성공');
+                    })
+                    .catch((error) => {
+                      console.error('[TabletScreen] onConfirm 함수 실행 오류:', error);
+                      if (error.message.includes('연결이 끊어졌습니다')) {
+                        setStatus('⚠️ BLE 연결 끊어짐 - 다시 시도해주세요');
+                        Alert.alert('연결 실패', 'BLE 연결이 끊어졌습니다.\n모바일에서 다시 시도해주세요.');
+                      } else {
+                        setStatus('연결 승인 처리 실패');
+                      }
+                    });
+                }
+              }
+            ]
+          );
         }
       );
       console.log('[TabletScreen] handleIoTRegistrationData 호출 완료');
@@ -71,7 +130,7 @@ const TabletScreen: React.FC = () => {
       console.error('[TabletScreen] 데이터 처리 오류:', error);
       setStatus('데이터 처리 오류 발생');
     }
-  }, [connectedDevices, connectionCode, serialNumber]);
+  }, [serialNumber]);
 
   useEffect(() => {
     const initializeBLE = async () => {

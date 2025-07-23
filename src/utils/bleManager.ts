@@ -14,8 +14,7 @@ export const BLE_CHARACTERISTICS = {
   STATUS: '550e8403-e29b-41d4-a716-446655440003',
 };
 
-// 기존 호환성을 위한 별칭
-export const BLE_WRITE_CHARACTERISTIC = BLE_CHARACTERISTICS.CODE_VERIFY;
+// BLE_WRITE_CHARACTERISTIC 별칭 제거 - 직접 BLE_CHARACTERISTICS.CODE_VERIFY 사용
 
 export const CONNECTION_CODE_LENGTH = 6;
 export const CODE_EXPIRY_TIME = 5 * 60 * 1000;
@@ -54,13 +53,7 @@ export const generateJwtToken = (serialNumber: string): string => {
   return `${header}.${payload}.${signature}`;
 };
 
-export const isIoTDevice = (deviceName: string | null): boolean => {
-  if (!deviceName) return false;
-  const patterns = ['IoT-', 'TAB-', 'TABLET-', 'MOBILE-', 'BLE-'];
-  return patterns.some(pattern => 
-    deviceName.toUpperCase().includes(pattern.toUpperCase())
-  );
-};
+// isIoTDevice 함수 제거 - 사용되지 않음
 
 export const getDataType = (data: string): 'connectionCode' | 'serialNumber' | 'jwtToken' | 'unknown' => {
   if (data.length === CONNECTION_CODE_LENGTH && /^[A-Z0-9]+$/.test(data)) return 'connectionCode';
@@ -270,8 +263,6 @@ export const stopAdvertising = async (): Promise<void> => {
 export const setupDataListener = (
   onDataReceived: (deviceId: string, data: string) => void
 ): (() => void) => {
-  console.log('[setupDataListener] 이벤트 리스너 설정 시작');
-  
   const BluetoothClientModule = NativeModules.BluetoothClient;
   
   if (!BluetoothClientModule) {
@@ -279,49 +270,36 @@ export const setupDataListener = (
     return () => {};
   }
   
-  console.log('[setupDataListener] BluetoothClientModule 확인됨');
-  
   let eventEmitter;
   try {
     eventEmitter = new NativeEventEmitter(BluetoothClientModule);
-    console.log('[setupDataListener] NativeEventEmitter 생성 성공');
   } catch (error) {
     console.error('[setupDataListener] NativeEventEmitter 생성 실패:', error);
     return () => {};
   }
   
-  console.log('[setupDataListener] onReceiveData 이벤트 리스너 등록 중...');
   const subscription = eventEmitter.addListener('onReceiveData', (event: any) => {
-    console.log('[setupDataListener] onReceiveData 이벤트 수신:', event);
-    
     try {
       let receivedString = '';
       if (event.data && Array.isArray(event.data)) {
         receivedString = String.fromCharCode(...event.data);
-        console.log('[setupDataListener] 배열에서 문자열 변환:', receivedString);
       } else if (typeof event.data === 'string') {
         receivedString = event.data;
-        console.log('[setupDataListener] 문자열 직접 사용:', receivedString);
       } else {
         console.error('[setupDataListener] 알 수 없는 데이터 형식:', event.data);
         return;
       }
       
       const deviceId = event.device || 'unknown';
-      console.log('[setupDataListener] 데이터 처리 완료, 콜백 호출:', { deviceId, receivedString });
       onDataReceived(deviceId, receivedString);
     } catch (error) {
       console.error('[setupDataListener] 데이터 수신 처리 오류:', error);
     }
   });
   
-  console.log('[setupDataListener] 이벤트 리스너 등록 완료');
-  
   return () => {
     try {
-      console.log('[setupDataListener] 이벤트 리스너 제거 중...');
       subscription.remove();
-      console.log('[setupDataListener] 이벤트 리스너 제거 완료');
     } catch (error) {
       console.error('[setupDataListener] 리스너 제거 실패:', error);
     }
@@ -333,11 +311,21 @@ export const sendNotification = async (
   characteristicUUID: string,
   message: string
 ): Promise<void> => {
-  await BluetoothClient.sendNotificationToDevice(
-    serviceUUID,
-    characteristicUUID,
-    message
-  );
+  try {
+    await BluetoothClient.sendNotificationToDevice(
+      serviceUUID,
+      characteristicUUID,
+      message
+    );
+  } catch (error) {
+    console.error('[sendNotification] 전송 실패, 연결 확인 중:', error);
+    
+    // 연결이 끊어진 경우를 체크하고 에러를 다시 던짐
+    if (error instanceof Error && error.message.includes('연결')) {
+      throw new Error('BLE 연결이 끊어졌습니다. 다시 연결해주세요.');
+    }
+    throw error;
+  }
 };
 
 // ========================
@@ -358,7 +346,7 @@ export const startIoTRegistration = async (
     onStatusUpdate('연결 코드 전송 중...');
     console.log('[startIoTRegistration] 연결 코드 전송 시작');
     
-    await writeData(device, BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC, connectionCode);
+    await writeData(device, BLE_SERVICE_UUID, BLE_CHARACTERISTICS.CODE_VERIFY, connectionCode);
     console.log('[startIoTRegistration] 연결 코드 전송 완료');
     onStatusUpdate('연결 코드 전송 완료 - 시리얼 번호 대기 중...');
     
@@ -366,38 +354,33 @@ export const startIoTRegistration = async (
     const subscription = monitorCharacteristic(
       device,
       BLE_SERVICE_UUID,
-      BLE_WRITE_CHARACTERISTIC,
+      BLE_CHARACTERISTICS.CODE_VERIFY,
       async (data) => {
         if (isCompleted) return; // 이미 완료된 경우 무시
         
         const dataType = getDataType(data);
         console.log('[startIoTRegistration] 데이터 수신:', { data, dataType });
         
-        if (dataType === 'serialNumber') {
-          console.log('[startIoTRegistration] 시리얼 번호 수신:', data);
-          onStatusUpdate('시리얼 번호 수신 - JWT 토큰 생성 중...');
-          
-          try {
-            const jwtToken = await simulateServerRequest(data);
-            console.log('[startIoTRegistration] JWT 토큰 생성 완료');
-            onStatusUpdate('JWT 토큰 전송 중...');
+                  if (dataType === 'serialNumber') {
+            onStatusUpdate('시리얼 번호 수신 - JWT 토큰 생성 중...');
             
-            // START 마크와 함께 JWT 토큰 전송 시작
-            const markedJwtToken = `START${jwtToken}END`;
-            console.log('[startIoTRegistration] START/END 마크가 포함된 JWT 토큰 전송:', markedJwtToken.length + '글자');
-            
-            await writeDataInChunks(device, BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC, markedJwtToken);
-            console.log('[startIoTRegistration] JWT 토큰 전송 완료');
-            
-            // 완료 상태 설정 및 모니터링 중단
-            isCompleted = true;
-            subscription.remove();
-            console.log('[startIoTRegistration] 모니터링 중단됨');
-            
-            // JWT 토큰 전송 완료 후 안정화 시간 제공
-            await new Promise(resolve => setTimeout(resolve, 500));
-            onStatusUpdate('IoT 기기 등록 완료!');
-            onComplete({ serialNumber: data, jwtToken });
+            try {
+              const jwtToken = await simulateServerRequest(data);
+              onStatusUpdate('JWT 토큰 전송 중...');
+              
+              // START 마크와 함께 JWT 토큰 전송 시작
+              const markedJwtToken = `START${jwtToken}END`;
+              
+              await writeDataInChunks(device, BLE_SERVICE_UUID, BLE_CHARACTERISTICS.CODE_VERIFY, markedJwtToken);
+              
+              // 완료 상태 설정 및 모니터링 중단
+              isCompleted = true;
+              subscription.remove();
+              
+              // JWT 토큰 전송 완료 후 안정화 시간 제공
+              await new Promise(resolve => setTimeout(resolve, 500));
+              onStatusUpdate('IoT 기기 등록 완료!');
+              onComplete({ serialNumber: data, jwtToken });
             
           } catch (error) {
             console.error('[startIoTRegistration] JWT 토큰 처리 실패:', error);
@@ -448,7 +431,8 @@ export const handleIoTRegistrationData = async (
   data: string,
   serialNumber: string,
   onStatusUpdate: (status: string) => void,
-  onComplete: (result: { connectionCode: string; serialNumber: string; jwtToken: string }) => void
+  onComplete: (result: { connectionCode: string; serialNumber: string; jwtToken: string }) => void,
+  onConnectionCodeReceived?: (connectionCode: string, onConfirm: () => Promise<void>) => void
 ): Promise<void> => {
   const dataType = getDataType(data);
   
@@ -463,29 +447,39 @@ export const handleIoTRegistrationData = async (
           // 연결 코드 저장
           deviceConnectionCodes.set(deviceId, data);
           
-          onStatusUpdate(`연결 코드 수신: ${data} - 시리얼 번호 전송 중...`);
-          console.log('[handleIoTRegistrationData] 유효한 연결 코드 수신, 시리얼 번호 전송 시작');
+          onStatusUpdate(`연결 코드 수신: ${data}`);
+          console.log('[handleIoTRegistrationData] 유효한 연결 코드 수신:', data);
           
-          // 즉시 시리얼 번호 전송 시도
-          try {
-            await sendNotification(BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC, serialNumber);
-            onStatusUpdate(`시리얼 번호 전송 완료: ${serialNumber} - JWT 대기 중...`);
-            console.log('[handleIoTRegistrationData] 시리얼 번호 전송 성공:', serialNumber);
-          } catch (error) {
-            console.error('[handleIoTRegistrationData] 시리얼 번호 전송 실패:', error);
-            onStatusUpdate('시리얼 번호 전송 실패 - 재시도 중...');
+                    // 사용자 확인 콜백이 있으면 팝업을 띄우고 확인 대기
+          if (onConnectionCodeReceived) {
+            console.log('[handleIoTRegistrationData] 사용자 확인 요청');
             
-            // 1초 후 재시도
-            setTimeout(async () => {
+            const sendSerialNumber = async () => {
+              onStatusUpdate(`연결 승인됨 - 시리얼 번호 전송 중...`);
+              
               try {
-                await sendNotification(BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC, serialNumber);
+                await sendNotification(BLE_SERVICE_UUID, BLE_CHARACTERISTICS.CODE_VERIFY, serialNumber);
                 onStatusUpdate(`시리얼 번호 전송 완료: ${serialNumber} - JWT 대기 중...`);
-                console.log('[handleIoTRegistrationData] 시리얼 번호 재전송 성공:', serialNumber);
-              } catch (retryError) {
-                console.error('[handleIoTRegistrationData] 시리얼 번호 재전송 실패:', retryError);
+              } catch (error) {
+                console.error('[handleIoTRegistrationData] 시리얼 번호 전송 실패:', error);
                 onStatusUpdate('시리얼 번호 전송 실패');
               }
-            }, 1000);
+            };
+            
+            onConnectionCodeReceived(data, sendSerialNumber);
+          } else {
+            // 기존 동작 (즉시 시리얼 번호 전송)
+            onStatusUpdate(`연결 코드 수신: ${data} - 시리얼 번호 전송 중...`);
+            console.log('[handleIoTRegistrationData] 유효한 연결 코드 수신, 시리얼 번호 전송 시작');
+            
+            // 즉시 시리얼 번호 전송 시도
+            try {
+              await sendNotification(BLE_SERVICE_UUID, BLE_CHARACTERISTICS.CODE_VERIFY, serialNumber);
+              onStatusUpdate(`시리얼 번호 전송 완료: ${serialNumber} - JWT 대기 중...`);
+            } catch (error) {
+              console.error('[handleIoTRegistrationData] 시리얼 번호 전송 실패:', error);
+              onStatusUpdate('시리얼 번호 전송 실패');
+            }
           }
         } else {
           console.error('[handleIoTRegistrationData] 유효하지 않은 연결 코드:', data);
@@ -571,7 +565,7 @@ export const initializePeripheralMode = async (
   onStatusUpdate: (status: string) => void
 ): Promise<() => void> => {
   onStatusUpdate('BLE 서비스 설정 중...');
-  await setupPeripheralService(BLE_SERVICE_UUID, BLE_WRITE_CHARACTERISTIC);
+  await setupPeripheralService(BLE_SERVICE_UUID, BLE_CHARACTERISTICS.CODE_VERIFY);
   
   onStatusUpdate('데이터 리스너 설정 중...');
   const cleanupListener = setupDataListener(onDataReceived);
