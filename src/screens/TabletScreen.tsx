@@ -13,8 +13,8 @@ import {
   initializePeripheralMode,
   handleIoTRegistrationData,
   stopAdvertising,
+  generateSerialNumber,
 } from '../utils/bleManager';
-import { generateSerialNumber } from '../utils/bleUtils';
 
 const TabletScreen: React.FC = () => {
   const [deviceName] = useState(`IoT-TAB-${Date.now().toString().slice(-6)}`);
@@ -25,70 +25,10 @@ const TabletScreen: React.FC = () => {
   const [jwtToken, setJwtToken] = useState<string | null>(null);
   const [connectedDevices, setConnectedDevices] = useState<string[]>([]);
   
-  const cleanupListener = useRef<(() => void) | null>(null);
+    const cleanupListener = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    initializeBLE();
-    
-    return () => {
-      console.log('[TabletScreen] 정리 중...');
-      if (cleanupListener.current) {
-        cleanupListener.current();
-      }
-      stopAdvertising().catch(() => {});
-    };
-  }, [initializeBLE]);
-
-  const initializeBLE = useCallback(async () => {
+  const onDataReceived = useCallback(async (deviceId: string, data: string) => {
     try {
-      setStatus('권한 확인 중...');
-      
-      const hasPermissions = await requestPermissions();
-      if (!hasPermissions) {
-        Alert.alert('권한 필요', 'Bluetooth 사용을 위해 필요한 권한을 허용해주세요.');
-        return;
-      }
-
-      const isBluetoothReady = await checkBluetoothClient();
-      if (!isBluetoothReady) {
-        throw new Error('Bluetooth를 사용할 수 없습니다');
-      }
-
-      cleanupListener.current = await initializePeripheralMode(
-        deviceName,
-        (deviceId, data) => onDataReceived(deviceId, data),
-        (status) => setStatus(status)
-      );
-      
-      setIsAdvertising(true);
-      
-    } catch (error) {
-      console.error('BLE 초기화 오류:', error);
-      setStatus('초기화 실패');
-      
-      let errorMessage = 'Bluetooth를 초기화할 수 없습니다.';
-      if (error instanceof Error) {
-        if (error.message.includes('permission')) {
-          errorMessage = '권한이 필요합니다. 앱 설정에서 Bluetooth 권한을 모두 허용해주세요.';
-        } else {
-          errorMessage = error.message;
-        }
-      }
-      
-      Alert.alert('오류', errorMessage, [
-        {
-          text: '다시 시도',
-          onPress: () => setTimeout(() => initializeBLE(), 1000)
-        },
-        { text: '취소', style: 'cancel' }
-             ]);
-     }
-   }, [deviceName]);
-
-  const onDataReceived = async (deviceId: string, data: string) => {
-    try {
-      console.log('[TabletScreen] 데이터 수신:', deviceId, data);
-      
       if (!connectedDevices.includes(deviceId)) {
         setConnectedDevices(prev => [...prev, deviceId]);
       }
@@ -97,7 +37,7 @@ const TabletScreen: React.FC = () => {
         deviceId,
         data,
         serialNumber,
-        (status) => setStatus(status),
+        setStatus,
         (result) => {
           if (result.connectionCode) {
             setConnectionCode(result.connectionCode);
@@ -121,7 +61,63 @@ const TabletScreen: React.FC = () => {
     } catch (error) {
       console.error('데이터 처리 오류:', error);
     }
-  };
+  }, [connectedDevices, connectionCode, serialNumber]);
+
+  useEffect(() => {
+    const initializeBLE = async () => {
+      try {
+        setStatus('권한 확인 중...');
+        
+        const hasPermissions = await requestPermissions();
+        if (!hasPermissions) {
+          Alert.alert('권한 필요', 'Bluetooth 사용을 위해 필요한 권한을 허용해주세요.');
+          return;
+        }
+
+        const isBluetoothReady = await checkBluetoothClient();
+        if (!isBluetoothReady) {
+          throw new Error('Bluetooth를 사용할 수 없습니다');
+        }
+
+        cleanupListener.current = await initializePeripheralMode(
+          deviceName,
+          onDataReceived,
+          setStatus
+        );
+        
+        setIsAdvertising(true);
+        
+      } catch (error) {
+        setStatus('초기화 실패');
+        
+        let errorMessage = 'Bluetooth를 초기화할 수 없습니다.';
+        if (error instanceof Error) {
+          if (error.message.includes('permission')) {
+            errorMessage = '권한이 필요합니다. 앱 설정에서 Bluetooth 권한을 모두 허용해주세요.';
+          } else {
+            errorMessage = error.message;
+          }
+        }
+        
+        Alert.alert('오류', errorMessage, [
+          {
+            text: '다시 시도',
+            onPress: () => setTimeout(() => initializeBLE(), 1000)
+          },
+          { text: '취소', style: 'cancel' }
+         ]);
+       }
+     };
+
+    initializeBLE();
+    
+    return () => {
+      if (cleanupListener.current) {
+        cleanupListener.current();
+      }
+      stopAdvertising().catch(() => {});
+    };
+  }, [deviceName, onDataReceived]);
 
   const handleStopAdvertising = async () => {
     try {
@@ -129,7 +125,6 @@ const TabletScreen: React.FC = () => {
       setIsAdvertising(false);
       setStatus('Advertising 중지됨');
     } catch (error) {
-      console.error('Advertising 중지 오류:', error);
       Alert.alert('오류', 'Advertising을 중지할 수 없습니다.');
     }
   };

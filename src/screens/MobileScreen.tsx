@@ -17,11 +17,9 @@ import {
   disconnectDevice,
   startIoTRegistration,
   cleanup,
-} from '../utils/bleManager';
-import {
   generateConnectionCode,
   isIoTDevice,
-} from '../utils/bleUtils';
+} from '../utils/bleManager';
 
 interface DeviceInfo {
   id: string;
@@ -47,9 +45,7 @@ const MobileScreen: React.FC = () => {
 
   useEffect(() => {
     initializeBLE();
-    
     return () => {
-      console.log('[MobileScreen] Cleaning up...');
       if (registrationSubscription.current) {
         registrationSubscription.current.remove();
       }
@@ -69,7 +65,6 @@ const MobileScreen: React.FC = () => {
       }
       setStatus('권한 확인 완료');
     } catch (error) {
-      console.error('BLE 초기화 오류:', error);
       Alert.alert('오류', 'Bluetooth를 초기화할 수 없습니다.');
     }
   };
@@ -96,8 +91,7 @@ const MobileScreen: React.FC = () => {
             });
           }
         },
-        (error) => {
-          console.error('스캔 에러:', error);
+        () => {
           setIsScanning(false);
           setStatus('스캔 오류');
         }
@@ -110,7 +104,6 @@ const MobileScreen: React.FC = () => {
       }, 10000);
       
     } catch (error) {
-      console.error('스캔 시작 오류:', error);
       setIsScanning(false);
       Alert.alert('오류', 'BLE 스캔을 시작할 수 없습니다.');
     }
@@ -139,7 +132,6 @@ const MobileScreen: React.FC = () => {
       ]);
       
     } catch (error) {
-      console.error('연결 오류:', error);
       Alert.alert('오류', '기기 연결에 실패했습니다.');
       setStatus('연결 실패');
     } finally {
@@ -152,7 +144,7 @@ const MobileScreen: React.FC = () => {
       registrationSubscription.current = await startIoTRegistration(
         device,
         connectionCode,
-        (status) => setStatus(status),
+        setStatus,
         (result) => {
           Alert.alert('성공', `IoT 기기 등록이 완료되었습니다!\n\n시리얼 번호: ${result.serialNumber}\nJWT: ${result.jwtToken.substring(0, 50)}...`, [
             {
@@ -167,7 +159,6 @@ const MobileScreen: React.FC = () => {
         }
       );
     } catch (error) {
-      console.error('등록 시작 오류:', error);
       Alert.alert('오류', 'IoT 등록을 시작할 수 없습니다.');
     }
   };
