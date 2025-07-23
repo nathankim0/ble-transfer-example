@@ -133,7 +133,40 @@ export const stopScan = (): void => {
 export const connectToDevice = async (deviceId: string): Promise<Device> => {
   const manager = getBleManager();
   const device = await manager.connectToDevice(deviceId);
-  return await device.discoverAllServicesAndCharacteristics();
+  
+  console.log('[connectToDevice] 서비스 및 특성 탐색 중...');
+  const connectedDevice = await device.discoverAllServicesAndCharacteristics();
+  
+  // iOS 전용 안정화 시간
+  if (Platform.OS === 'ios') {
+    console.log('[connectToDevice] iOS 연결 안정화 대기...');
+    await new Promise(resolve => setTimeout(resolve, 2500)); // 2.5초 대기
+    
+    // 필요한 서비스와 특성이 존재하는지 확인
+    try {
+      const services = await connectedDevice.services();
+      const targetService = services.find(s => s.uuid.toLowerCase() === BLE_SERVICE_UUID.toLowerCase());
+      
+      if (targetService) {
+        const characteristics = await targetService.characteristics();
+        const targetChar = characteristics.find(c => c.uuid.toLowerCase() === BLE_CHARACTERISTICS.CODE_VERIFY.toLowerCase());
+        
+        if (targetChar) {
+          console.log('[connectToDevice] 필요한 특성 확인됨:', targetChar.uuid);
+          console.log('[connectToDevice] Notify 지원:', targetChar.isNotifiable, ', Indicate 지원:', targetChar.isIndicatable);
+        } else {
+          console.warn('[connectToDevice] 대상 특성을 찾을 수 없음');
+        }
+      } else {
+        console.warn('[connectToDevice] 대상 서비스를 찾을 수 없음');
+      }
+    } catch (error) {
+      console.warn('[connectToDevice] 서비스/특성 확인 실패:', error);
+    }
+  }
+  
+  console.log('[connectToDevice] 연결 완료 및 준비됨');
+  return connectedDevice;
 };
 
 export const disconnectDevice = async (device: Device): Promise<void> => {
@@ -204,20 +237,73 @@ export const monitorCharacteristic = (
   onDataReceived: (data: string) => void,
   onError?: (error: BleError) => void
 ): Subscription => {
-  return device.monitorCharacteristicForService(
-    serviceUUID,
-    characteristicUUID,
-    (error, characteristic) => {
-      if (error) {
-        onError?.(error);
-        return;
+  console.log('[monitorCharacteristic] 모니터링 시작:', { serviceUUID, characteristicUUID });
+  
+  // iOS 전용: CCCD descriptor 활성화 시도
+  if (Platform.OS === 'ios') {
+    setTimeout(async () => {
+      try {
+        console.log('[monitorCharacteristic] iOS CCCD descriptor 활성화 시도');
+        const cccdUUID = '00002902-0000-1000-8000-00805f9b34fb';
+        const notificationValue = Buffer.from([1, 0]).toString('base64');
+        
+        await device.writeDescriptorForService(
+          serviceUUID,
+          characteristicUUID,
+          cccdUUID,
+          notificationValue
+        );
+        console.log('[monitorCharacteristic] CCCD descriptor 활성화 성공');
+      } catch (cccdError) {
+        console.warn('[monitorCharacteristic] CCCD descriptor 활성화 실패:', cccdError);
       }
-      if (characteristic?.value) {
-        const data = Buffer.from(characteristic.value, 'base64').toString('utf-8');
-        onDataReceived(data);
+    }, 500);
+  }
+  
+  let retryCount = 0;
+  const maxRetries = Platform.OS === 'ios' ? 3 : 0;
+  
+  const startMonitoring = (): Subscription => {
+    return device.monitorCharacteristicForService(
+      serviceUUID,
+      characteristicUUID,
+      (error, characteristic) => {
+        if (error) {
+          console.error('[monitorCharacteristic] 오류 발생:', error);
+          
+          // iOS "Operation was cancelled" 오류는 정상적인 동작이므로 무시
+          if (Platform.OS === 'ios' && (error.reason?.includes('cancelled') || error.message?.includes('cancelled'))) {
+            console.log('[monitorCharacteristic] iOS Operation was cancelled - 정상적인 동작이므로 무시');
+            return;
+          }
+          
+          // iOS에서 notify 실패 시 재시도
+          if (Platform.OS === 'ios' && retryCount < maxRetries && error.message?.includes('notify change failed')) {
+            retryCount++;
+            console.log(`[monitorCharacteristic] iOS notify 실패 - 재시도 ${retryCount}/${maxRetries}`);
+            
+            setTimeout(() => {
+              console.log('[monitorCharacteristic] iOS notify 재시도 시작');
+              return startMonitoring();
+            }, 1500 * retryCount);
+            return;
+          }
+          
+          console.error('[monitorCharacteristic] 실제 모니터링 오류:', error);
+          onError?.(error);
+          return;
+        }
+        
+        if (characteristic?.value) {
+          const data = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+          console.log('[monitorCharacteristic] 데이터 수신:', data.substring(0, 50));
+          onDataReceived(data);
+        }
       }
-    }
-  );
+    );
+  };
+  
+  return startMonitoring();
 };
 
 // ========================
@@ -414,8 +500,85 @@ export const startIoTRegistration = async (
           console.log('[startIoTRegistration] 이미 완료된 상태 - 모니터링 에러 무시:', error);
           return;
         }
+        
         console.error('[startIoTRegistration] 모니터링 오류:', error);
-        onError('데이터 모니터링 오류');
+        
+        // iOS에서 notify 실패 시 폴링 방식으로 전환
+        if (Platform.OS === 'ios' && error.message?.includes('notify change failed')) {
+          console.log('[startIoTRegistration] iOS notify 실패 - 스마트 폴링 방식으로 전환');
+          onStatusUpdate('iOS 호환 모드로 전환 - 데이터 대기 중...');
+          
+          let pollCount = 0;
+          const maxPolls = 40; // 20초 (500ms * 40)
+          let lastReadValue = connectionCode;
+          
+          const pollInterval = setInterval(async () => {
+            if (isCompleted) {
+              clearInterval(pollInterval);
+              return;
+            }
+            
+            pollCount++;
+            if (pollCount > maxPolls) {
+              clearInterval(pollInterval);
+              if (!isCompleted) {
+                onError('타임아웃: 응답을 받지 못했습니다');
+              }
+              return;
+            }
+            
+            try {
+              const characteristic = await device.readCharacteristicForService(
+                BLE_SERVICE_UUID,
+                BLE_CHARACTERISTICS.CODE_VERIFY
+              );
+              
+              if (characteristic.value) {
+                const data = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+                
+                if (data && data !== lastReadValue && data !== connectionCode && data.trim().length > 0) {
+                  console.log('[startIoTRegistration] 폴링으로 새 데이터 수신:', data.substring(0, 20) + '...');
+                  clearInterval(pollInterval);
+                  isCompleted = true;
+                  lastReadValue = data;
+                  
+                  const dataType = getDataType(data);
+                  if (dataType === 'serialNumber') {
+                    onStatusUpdate('시리얼 번호 수신 - JWT 토큰 생성 중...');
+                    try {
+                      const jwtToken = await simulateServerRequest(data);
+                      onStatusUpdate('JWT 토큰 전송 중...');
+                      
+                      const markedJwtToken = `START${jwtToken}END`;
+                      await writeDataInChunks(device, BLE_SERVICE_UUID, BLE_CHARACTERISTICS.CODE_VERIFY, markedJwtToken);
+                      
+                      await new Promise(resolve => setTimeout(resolve, 500));
+                      onStatusUpdate('IoT 기기 등록 완료!');
+                      onComplete({ serialNumber: data, jwtToken });
+                    } catch (jwtError) {
+                      console.error('[startIoTRegistration] JWT 처리 실패:', jwtError);
+                      onError('JWT 토큰 처리 실패');
+                    }
+                  }
+                } else {
+                  const progress = Math.min(95, Math.floor((pollCount / maxPolls) * 100));
+                  if (pollCount % 4 === 0) {
+                    onStatusUpdate(`iOS 호환 모드 - 응답 대기 중... (${progress}%)`);
+                  }
+                }
+              }
+            } catch (readError) {
+              console.debug('[startIoTRegistration] 폴링 읽기 실패 (정상):', readError instanceof Error ? readError.message : String(readError));
+            }
+          }, 500);
+          
+        } else if (Platform.OS === 'ios' && (error.reason?.includes('cancelled') || error.message?.includes('cancelled'))) {
+          console.log('[startIoTRegistration] iOS Operation was cancelled - 일반적인 iOS BLE 동작이므로 무시');
+          onStatusUpdate('연결 코드 전송 완료 - 시리얼 번호 대기 중...');
+        } else {
+          console.error('[startIoTRegistration] 실제 모니터링 오류 발생:', error);
+          onError('데이터 모니터링 오류');
+        }
       }
     );
     

@@ -46,6 +46,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import android.bluetooth.BluetoothGattDescriptor;
 
 @ReactModule(name = BluetoothClientModule.NAME)
 public class BluetoothClientModule extends ReactContextBaseJavaModule {
@@ -365,6 +366,24 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
         UUID CHAR_UUID = UUID.fromString(uuid);
         BluetoothGattCharacteristic tempChar = new BluetoothGattCharacteristic(CHAR_UUID, properties, permissions);
         
+        // iOS 호환성을 위한 CCCD descriptor 추가 (notify 또는 indicate 속성이 있는 경우)
+        if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0 || 
+            (properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) {
+            
+            Log.d(TAG, "Adding CCCD descriptor for iOS compatibility");
+            UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+            BluetoothGattDescriptor cccdDescriptor = new BluetoothGattDescriptor(
+                CCCD_UUID,
+                BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE
+            );
+            
+            // CCCD 기본값 설정 (notification disabled)
+            cccdDescriptor.setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE);
+            tempChar.addDescriptor(cccdDescriptor);
+            
+            Log.d(TAG, "CCCD descriptor added successfully");
+        }
+        
         BluetoothGattService service = this.servicesMap.get(serviceUUID);
         if (service != null) {
             service.addCharacteristic(tempChar);
@@ -467,6 +486,49 @@ public class BluetoothClientModule extends ReactContextBaseJavaModule {
                     .emit("onReceiveData", map);
             }
             Log.d(TAG, "=== onCharacteristicWriteRequest 완료 ===");
+        }
+
+        @SuppressLint("MissingPermission")
+        @Override
+        public void onDescriptorWriteRequest(BluetoothDevice device, int requestId,
+                                             BluetoothGattDescriptor descriptor, boolean preparedWrite, boolean responseNeeded,
+                                             int offset, byte[] value) {
+            super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value);
+            
+            Log.d(TAG, "=== onDescriptorWriteRequest 시작 ===");
+            Log.d(TAG, "Device: " + device.toString());
+            Log.d(TAG, "Descriptor UUID: " + descriptor.getUuid().toString());
+            Log.d(TAG, "Value: " + (value != null ? java.util.Arrays.toString(value) : "null"));
+            
+            // CCCD descriptor 처리 (iOS 호환성)
+            if (descriptor.getUuid().toString().toLowerCase().equals("00002902-0000-1000-8000-00805f9b34fb")) {
+                if (value != null && value.length >= 2) {
+                    boolean notificationsEnabled = (value[0] & 0x01) != 0;
+                    boolean indicationsEnabled = (value[0] & 0x02) != 0;
+                    
+                    Log.d(TAG, "CCCD 설정 - Notifications: " + notificationsEnabled + ", Indications: " + indicationsEnabled);
+                    
+                    // descriptor 값 설정
+                    descriptor.setValue(value);
+                    
+                    if (responseNeeded) {
+                        Log.d(TAG, "CCCD write response 전송");
+                        mGattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+                    }
+                } else {
+                    Log.e(TAG, "Invalid CCCD value");
+                    if (responseNeeded) {
+                        mGattServer.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, offset, null);
+                    }
+                }
+            } else {
+                Log.d(TAG, "다른 descriptor write 요청");
+                if (responseNeeded) {
+                    mGattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+                }
+            }
+            
+            Log.d(TAG, "=== onDescriptorWriteRequest 완료 ===");
         }
     };
 
