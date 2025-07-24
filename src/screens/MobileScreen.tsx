@@ -70,7 +70,7 @@ const MobileScreen: React.FC = () => {
     }
   };
 
-  const startScan = async () => {
+  const performScan = async (retryCount = 0) => {
     if (isScanning) return;
     
     setDevices(new Map());
@@ -78,6 +78,15 @@ const MobileScreen: React.FC = () => {
     setStatus('스캔 중...');
     
     try {
+      // BLE 권한 재확인
+      const hasPermissions = await requestPermissions();
+      if (!hasPermissions) {
+        setIsScanning(false);
+        setStatus('권한 필요');
+        Alert.alert('권한 필요', 'Bluetooth 사용을 위해 필요한 권한을 허용해주세요.');
+        return;
+      }
+      
       scanForDevices(
         (device) => {
           if (isIoTDevice(device.name)) {
@@ -92,12 +101,23 @@ const MobileScreen: React.FC = () => {
             });
           }
         },
-        () => {
+        (error) => {
+          console.warn('[MobileScreen] 스캔 오류:', error);
           setIsScanning(false);
-          setStatus('스캔 오류');
+          
+          // 첫 번째 실패 시 자동 재시도 (BLE 초기화 지연 대응)
+          if (retryCount === 0) {
+            setStatus('BLE 초기화 중 - 재시도...');
+            setTimeout(() => {
+              performScan(1); // 1회 재시도
+            }, 2000);
+          } else {
+            setStatus('스캔 실패 - 다시 시도해주세요');
+          }
         }
       );
       
+      // 10초 후 자동 중지
       setTimeout(() => {
         if (isScanning) {
           handleStopScan();
@@ -106,8 +126,14 @@ const MobileScreen: React.FC = () => {
       
     } catch (error) {
       setIsScanning(false);
+      setStatus('스캔 초기화 실패');
+      console.error('[MobileScreen] 스캔 시작 오류:', error);
       Alert.alert('오류', 'BLE 스캔을 시작할 수 없습니다.');
     }
+  };
+
+  const startScan = () => {
+    performScan(0);
   };
 
   const handleStopScan = () => {

@@ -239,24 +239,10 @@ export const monitorCharacteristic = (
 ): Subscription => {
   console.log('[monitorCharacteristic] 모니터링 시작:', { serviceUUID, characteristicUUID });
   
-  // iOS 전용: CCCD descriptor 활성화 시도
+  // iOS 전용: 안정화 시간 (CCCD는 iOS가 자동 처리)
   if (Platform.OS === 'ios') {
-    setTimeout(async () => {
-      try {
-        console.log('[monitorCharacteristic] iOS CCCD descriptor 활성화 시도');
-        const cccdUUID = '00002902-0000-1000-8000-00805f9b34fb';
-        const notificationValue = Buffer.from([1, 0]).toString('base64');
-        
-        await device.writeDescriptorForService(
-          serviceUUID,
-          characteristicUUID,
-          cccdUUID,
-          notificationValue
-        );
-        console.log('[monitorCharacteristic] CCCD descriptor 활성화 성공');
-      } catch (cccdError) {
-        console.warn('[monitorCharacteristic] CCCD descriptor 활성화 실패:', cccdError);
-      }
+    setTimeout(() => {
+      console.log('[monitorCharacteristic] iOS 모니터링 안정화 완료');
     }, 500);
   }
   
@@ -269,13 +255,13 @@ export const monitorCharacteristic = (
       characteristicUUID,
       (error, characteristic) => {
         if (error) {
-          console.error('[monitorCharacteristic] 오류 발생:', error);
-          
-          // iOS "Operation was cancelled" 오류는 정상적인 동작이므로 무시
+          // iOS "Operation was cancelled" 오류는 정상적인 동작이므로 무시 (로그도 debug 레벨로)
           if (Platform.OS === 'ios' && (error.reason?.includes('cancelled') || error.message?.includes('cancelled'))) {
-            console.log('[monitorCharacteristic] iOS Operation was cancelled - 정상적인 동작이므로 무시');
+            console.debug('[monitorCharacteristic] iOS Operation was cancelled - 정상적인 동작');
             return;
           }
+          
+          console.error('[monitorCharacteristic] 오류 발생:', error);
           
           // iOS에서 notify 실패 시 재시도
           if (Platform.OS === 'ios' && retryCount < maxRetries && error.message?.includes('notify change failed')) {
