@@ -85,9 +85,38 @@ let bleManagerInstance: BleManager | null = null;
 
 export const getBleManager = (): BleManager => {
   if (!bleManagerInstance) {
-    bleManagerInstance = new BleManager();
+    console.log('[getBleManager] BLE Manager 새로 생성');
+    // iOS 전용 설정 추가
+    if (Platform.OS === 'ios') {
+      bleManagerInstance = new BleManager({
+        restoreStateIdentifier: 'BleTransferApp',
+        restoreStateFunction: (restoredState) => {
+          if (restoredState) {
+            console.log('[iOS BLE] State restored:', restoredState);
+            if (restoredState.connectedPeripherals?.length > 0) {
+              console.log('[iOS BLE] Restored connected peripherals:', restoredState.connectedPeripherals.length);
+            }
+          }
+        }
+      });
+    } else {
+      bleManagerInstance = new BleManager();
+    }
   }
   return bleManagerInstance;
+};
+
+// BLE Manager 강제 재초기화 함수 (iOS 전용)
+export const resetBleManager = (): void => {
+  if (Platform.OS === 'ios' && bleManagerInstance) {
+    console.log('[resetBleManager] iOS BLE Manager 재초기화');
+    try {
+      bleManagerInstance.destroy();
+    } catch (error) {
+      console.warn('[resetBleManager] Manager destroy 오류:', error);
+    }
+    bleManagerInstance = null;
+  }
 };
 
 export const requestPermissions = async (): Promise<boolean> => {
@@ -112,18 +141,76 @@ export const requestPermissions = async (): Promise<boolean> => {
 // ========================
 // Central 모드 (모바일)
 // ========================
-export const scanForDevices = (
+export const scanForDevices = async (
   onDeviceFound: (device: Device) => void,
   onError?: (error: BleError) => void
-): void => {
+): Promise<void> => {
   const manager = getBleManager();
-  manager.startDeviceScan(null, null, (error, device) => {
-    if (error) {
-      onError?.(error);
-      return;
+  
+  try {
+    // iOS에서 BLE 상태 확인 및 대기
+    if (Platform.OS === 'ios') {
+      console.log('[scanForDevices] iOS BLE 상태 확인 중...');
+      
+      const bleState = await manager.state();
+      console.log('[scanForDevices] 현재 BLE 상태:', bleState);
+      
+      if (bleState === 'Unknown' || bleState === 'Unsupported') {
+        console.log('[scanForDevices] BLE 상태 불안정 - Manager 재초기화 시도...');
+        
+        // Manager 재초기화
+        resetBleManager();
+        const newManager = getBleManager();
+        
+        // BLE 상태가 안정될 때까지 대기 (최대 5초)
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const currentState = await newManager.state();
+          console.log(`[scanForDevices] 재확인 ${attempts + 1}/${maxAttempts}:`, currentState);
+          
+          if (currentState === 'PoweredOn') {
+            console.log('[scanForDevices] BLE 상태 안정화 완료');
+            break;
+          }
+          
+          attempts++;
+        }
+        
+        const finalState = await newManager.state();
+        if (finalState !== 'PoweredOn') {
+          throw new Error(`Bluetooth가 비활성화되어 있습니다. 상태: ${finalState}`);
+        }
+      } else if (bleState !== 'PoweredOn') {
+        throw new Error(`Bluetooth를 켜주세요. 현재 상태: ${bleState}`);
+      }
     }
-    if (device) onDeviceFound(device);
-  });
+    
+    console.log('[scanForDevices] 스캔 시작');
+    // 재초기화된 경우 새로운 manager 사용
+    const currentManager = bleManagerInstance || manager;
+    currentManager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.error('[scanForDevices] 스캔 오류:', error);
+        onError?.(error);
+        return;
+      }
+      if (device) {
+        console.debug('[scanForDevices] 기기 발견:', device.name || 'Unknown', device.id.slice(-8));
+        onDeviceFound(device);
+      }
+    });
+    
+  } catch (error) {
+    console.error('[scanForDevices] 초기화 오류:', error);
+    if (error instanceof Error) {
+      onError?.(new Error(error.message) as BleError);
+    } else {
+      onError?.(new Error('BLE 초기화 실패') as BleError);
+    }
+  }
 };
 
 export const stopScan = (): void => {

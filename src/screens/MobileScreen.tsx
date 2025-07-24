@@ -87,7 +87,7 @@ const MobileScreen: React.FC = () => {
         return;
       }
       
-      scanForDevices(
+      await scanForDevices(
         (device) => {
           if (isIoTDevice(device.name)) {
             setDevices(prev => {
