@@ -18,10 +18,8 @@ React Native를 사용한 BLE(Bluetooth Low Energy) 기반 IoT 기기 등록 시
 - ✅ **30초 제한 사용자 확인**: 연결 요청 시 태블릿에서 30초 내 승인 필요
 - ✅ **안전한 3단계 인증**: 연결 코드 → 시리얼 번호 → JWT 토큰
 - ✅ **실시간 BLE 통신**: Central-Peripheral 양방향 데이터 교환
-- ✅ **자동 타임아웃 방지**: BLE 연결 끊김 방지를 위한 시간 관리
 - ✅ **iOS BLE 안정성**: iOS 특유의 BLE 문제들 완전 해결
 - ✅ **스마트 재시도**: 첫 번째 스캔 실패 시 자동 재시도
-- ✅ **폴링 대체**: iOS notify 실패 시 폴링 모드로 자동 전환
 
 ## 📋 통신 플로우
 
@@ -57,29 +55,6 @@ sequenceDiagram
 ```
 
 ## 🔧 기술 스택
-
-### BLE 라이브러리
-
-#### Central (모바일)
-- **라이브러리**: `react-native-ble-plx`
-- **역할**: BLE 스캐너, 클라이언트 역할
-- **기능**: 
-  - 주변 BLE 기기 스캔
-  - Peripheral에 연결
-  - Characteristic에 데이터 쓰기
-  - Notification 수신
-  - iOS/Android 크로스 플랫폼 지원
-
-#### Peripheral (태블릿) 
-- **라이브러리**: `react-native-bluetooth-client` (커스텀)
-- **원본**: [highRPM/react-native-bluetooth-client](https://github.com/highRPM/react-native-bluetooth-client)
-- **역할**: BLE 서버, Advertiser 역할
-- **기능**:
-  - BLE Advertising 
-  - GATT 서비스/특성 관리
-  - 클라이언트로부터 데이터 수신
-  - Notification 전송
-  - CCCD descriptor 자동 처리 (iOS 호환성)
 
 ### BLE 서비스 구조
 
@@ -173,59 +148,9 @@ npm run ios
 ```
 [scanForDevices] iOS BLE 상태 확인 중...
 [scanForDevices] 현재 BLE 상태: PoweredOn
-[scanForDevices] 스캔 시작
-[connectToDevice] 서비스 및 특성 탐색 중...
-[connectToDevice] iOS 연결 안정화 대기...
-[connectToDevice] 필요한 특성 확인됨: 550e8401-e29b-41d4-a716-446655440001
-[connectToDevice] Notify 지원: true, Indicate 지원: false
 [connectToDevice] 연결 완료 및 준비됨
 [monitorCharacteristic] 데이터 수신: TAB-139515
-[writeDataInChunks] 청크 전송 시작: {messageLength: 178}
-[writeDataInChunks] 총 청크 수: 10
 [writeDataInChunks] 모든 청크 전송 완료
-```
-
-## 🔐 보안 특징
-
-- **3단계 인증**: 연결 코드 → 시리얼 번호 → JWT 토큰
-- **시간 제한**: 30초 내 사용자 승인 필요
-- **연결 검증**: BLE 연결 상태 지속 모니터링
-- **데이터 암호화**: BLE 기본 암호화 + JWT 토큰
-- **청크 전송**: 큰 데이터는 18바이트 청크로 분할 전송
-- **무결성 검증**: START/END 마크로 데이터 완전성 확인
-
-## 🛠️ 개발 정보
-
-### 주요 상수
-```typescript
-BLE_SERVICE_UUID = '550e8400-e29b-41d4-a716-446655440000'
-BLE_CHARACTERISTICS = {
-  CODE_VERIFY: '550e8401-e29b-41d4-a716-446655440001',
-  JWT_TOKEN: '550e8402-e29b-41d4-a716-446655440002', 
-  STATUS: '550e8403-e29b-41d4-a716-446655440003'
-}
-CONNECTION_CODE_LENGTH = 6
-CONNECTION_TIMEOUT = 30000 // 30초
-BLE_CHUNK_DATA_SIZE = 18 // 청크 크기
-BLE_MTU_SIZE = 20 // BLE MTU 크기
-```
-
-### 디렉토리 구조
-```
-src/
-├── bluetooth/           # 커스텀 Bluetooth Client 모듈
-│   └── index.tsx
-├── screens/
-│   ├── HomeScreen.tsx   # 메인 선택 화면
-│   ├── MobileScreen.tsx # Central 모드 (모바일)
-│   └── TabletScreen.tsx # Peripheral 모드 (태블릿)
-└── utils/
-    └── bleManager.ts    # BLE 통신 로직 (700+ 라인)
-
-android/app/src/main/java/com/bletransferapp/bluetooth/
-├── BluetoothClientModule.java    # Android BLE Peripheral 구현
-├── BluetoothClientPackage.java   # React Native 모듈 패키지
-└── Constants.java                # BLE 상수 정의
 ```
 
 ## 🎯 iOS BLE 최적화
@@ -235,59 +160,18 @@ android/app/src/main/java/com/bletransferapp/bluetooth/
 #### 1. **CCCD Descriptor 문제**
 - **문제**: iOS notify 실패로 `notify change failed` 에러
 - **해결**: Android 네이티브 모듈에서 CCCD descriptor 자동 추가
-```java
-// CCCD descriptor 자동 추가 (iOS 호환성)
-UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
-BluetoothGattDescriptor cccdDescriptor = new BluetoothGattDescriptor(
-    CCCD_UUID, 
-    BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE
-);
-tempChar.addDescriptor(cccdDescriptor);
-```
 
 #### 2. **BLE 상태 불안정 문제**
 - **문제**: `BluetoothLE is in unknown state` 에러
 - **해결**: 스캔 전 BLE 상태 확인 및 Manager 재초기화
-```typescript
-const bleState = await manager.state();
-if (bleState === 'Unknown' || bleState === 'Unsupported') {
-  resetBleManager();
-  const newManager = getBleManager();
-  // 상태 안정화 대기...
-}
-```
 
 #### 3. **첫 번째 스캔 실패 문제**
 - **문제**: 앱 실행 후 첫 스캔 시 권한/초기화 지연
 - **해결**: 자동 재시도 로직 구현
-```typescript
-// 첫 번째 실패 시 자동 재시도
-if (retryCount === 0) {
-  setStatus('BLE 초기화 중 - 재시도...');
-  setTimeout(() => performScan(1), 2000);
-}
-```
 
 #### 4. **Notify 실패 시 폴링 대체**
 - **문제**: iOS에서 간헐적 notify 실패
 - **해결**: 폴링 방식으로 자동 전환
-```typescript
-if (Platform.OS === 'ios' && error.message?.includes('notify change failed')) {
-  console.log('iOS notify 실패 - 스마트 폴링 방식으로 전환');
-  // 500ms 간격 폴링 시작...
-}
-```
-
-### iOS 전용 설정
-```typescript
-// iOS BLE Manager 설정
-bleManagerInstance = new BleManager({
-  restoreStateIdentifier: 'BleTransferApp',
-  restoreStateFunction: (restoredState) => {
-    // 앱 백그라운드 복원 시 상태 복구
-  }
-});
-```
 
 ## 🐛 트러블슈팅
 
@@ -327,45 +211,6 @@ bleManagerInstance = new BleManager({
 - 태블릿의 Advertising이 활성 상태인지 확인
 - 청크 전송 로그에서 중단된 지점 확인
 
-## 📊 성능 지표
-
-### 연결 성공률
-- **Android**: 95%+ (첫 시도)
-- **iOS**: 95%+ (재시도 포함)
-- **크로스 플랫폼**: iOS ↔ Android 완전 호환
-
-### 데이터 전송
-- **연결 코드**: 6자 (즉시 전송)
-- **시리얼 번호**: 10자 (즉시 수신)
-- **JWT 토큰**: 178자 → 10개 청크 (약 1초)
-
-### 타이밍
-- **스캔 시간**: 1-3초
-- **연결 시간**: 2-5초 (iOS 안정화 포함)
-- **전체 등록**: 10-15초 (사용자 승인 포함)
-
-## 🔄 업데이트 히스토리
-
-### v1.3.0 (최신)
-- ✅ iOS BLE 'unknown state' 에러 완전 해결
-- ✅ BLE 상태 사전 확인 및 Manager 재초기화
-- ✅ iOS 전용 restoreStateIdentifier 설정
-
-### v1.2.0
-- ✅ iOS BLE 스캔 오류 및 CCCD descriptor 에러 해결
-- ✅ 첫 번째 스캔부터 성공하는 자동 재시도 로직
-- ✅ 불필요한 에러 메시지 제거
-
-### v1.1.0
-- ✅ iOS BLE notify 문제 해결 (CCCD descriptor + 폴링 대체)
-- ✅ Android 네이티브 모듈에 iOS 호환성 추가
-- ✅ 연결 안정화 시간 최적화 (2.5초)
-
-### v1.0.0
-- ✅ 기본 BLE Central-Peripheral 통신 구현
-- ✅ 30초 제한 사용자 확인 시스템
-- ✅ 3단계 보안 인증 플로우
-
 ## 🚦 테스트 가이드
 
 ### 수동 테스트 체크리스트
@@ -377,13 +222,45 @@ bleManagerInstance = new BleManager({
 - [ ] JWT 토큰 청크 전송 완료
 - [ ] 양쪽 기기에서 성공 메시지 확인
 
-### 자동화 테스트
-```bash
-# 유닛 테스트
-npm test
+## 🔐 보안 특징
 
-# BLE 통신 테스트 (시뮬레이터에서는 제한적)
-npm run test:integration
+- **3단계 인증**: 연결 코드 → 시리얼 번호 → JWT 토큰
+- **시간 제한**: 30초 내 사용자 승인 필요
+- **연결 검증**: BLE 연결 상태 지속 모니터링
+- **데이터 암호화**: BLE 기본 암호화 + JWT 토큰
+- **청크 전송**: 큰 데이터는 18바이트 청크로 분할 전송
+- **무결성 검증**: START/END 마크로 데이터 완전성 확인
+
+## 🛠️ 개발 정보
+
+### 주요 상수
+```typescript
+BLE_SERVICE_UUID = '550e8400-e29b-41d4-a716-446655440000'
+BLE_CHARACTERISTICS = {
+  CODE_VERIFY: '550e8401-e29b-41d4-a716-446655440001',
+  JWT_TOKEN: '550e8402-e29b-41d4-a716-446655440002', 
+  STATUS: '550e8403-e29b-41d4-a716-446655440003'
+}
+CONNECTION_CODE_LENGTH = 6
+CONNECTION_TIMEOUT = 30000 // 30초
+BLE_CHUNK_DATA_SIZE = 18 // 청크 크기
+```
+
+### 디렉토리 구조
+```
+src/
+├── bluetooth/           # 커스텀 Bluetooth Client 모듈
+├── screens/
+│   ├── HomeScreen.tsx   # 메인 선택 화면
+│   ├── MobileScreen.tsx # Central 모드 (모바일)
+│   └── TabletScreen.tsx # Peripheral 모드 (태블릿)
+└── utils/
+    └── bleManager.ts    # BLE 통신 로직
+
+android/app/src/main/java/com/bletransferapp/bluetooth/
+├── BluetoothClientModule.java    # Android BLE Peripheral 구현
+├── BluetoothClientPackage.java
+└── Constants.java
 ```
 
 ## 📄 라이센스
@@ -394,15 +271,7 @@ MIT License
 
 - **Central BLE**: [react-native-ble-plx](https://github.com/dotintent/react-native-ble-plx)
 - **Peripheral BLE**: [react-native-bluetooth-client](https://github.com/highRPM/react-native-bluetooth-client) (커스텀 버전)
-- **Navigation**: [React Navigation v6](https://reactnavigation.org/)
 - **Buffer 처리**: [buffer](https://github.com/feross/buffer)
-
-## 🔗 관련 링크
-
-- [프로젝트 저장소](https://github.com/nathankim0/ble-transfer-example)
-- [이슈 및 버그 리포트](https://github.com/nathankim0/ble-transfer-example/issues)
-- [React Native BLE 가이드](https://reactnative.dev/docs/bluetooth)
-- [BLE 베스트 프랙티스](https://developer.android.com/guide/topics/connectivity/bluetooth/ble-best-practices)
 
 ---
 
